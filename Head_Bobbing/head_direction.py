@@ -4,17 +4,14 @@ import numpy as np
 import time
 
 
+def fate(cam):
+    mp_face_mesh = mp.solutions.face_mesh
+    face_mesh = mp_face_mesh.FaceMesh(min_detection_confidence=0.5, min_tracking_confidence=0.5)
 
-mp_face_mesh = mp.solutions.face_mesh
-face_mesh = mp_face_mesh.FaceMesh(min_detection_confidence=0.5,min_tracking_confidence=0.5)
+    mp_drawing = mp.solutions.drawing_utils
 
-mp_drawing = mp.solutions.drawing_utils
+    drawing_spec = mp_drawing.DrawingSpec(thickness=1, circle_radius=1)
 
-drawing_spec = mp_drawing.DrawingSpec(thickness=1,circle_radius=1)
-
-cam = cv2.VideoCapture(0)
-
-while True:
     ret, frame = cam.read()
 
     start = time.time()
@@ -69,23 +66,6 @@ while True:
             z = angles[2] * 360
 
             if x < -10:
-                text = "Looking Down"
-            nose_3d_proj, jacob = cv2.projectPoints(nose_3d, rot_vec, trans_vec, cam_matrix, dist_matrix)
-            p1 = (int(nose_2d[0]), int(nose_2d[1]))
-            p2 = (int(nose_2d[0] + y * 10), int(nose_2d[1] - x * 10))
-
-            cv2.line(frame, p1, p2, (255, 0, 0), 3)
-
-            print(text)
-        mp_drawing.draw_landmarks(image=frame,
-                                  landmark_list=face_landmarks,
-                                  connections=mp_face_mesh.FACEMESH_CONTOURS,
-                                  landmark_drawing_spec=drawing_spec,
-                                  connection_drawing_spec=drawing_spec)
-
-        cv2.imshow("Processed Frame", frame)
-
-        spacekey = cv2.waitKey(1)
-        if spacekey == ord('q'):
-            break
-cam.release()
+                return True
+            else:
+                return False
