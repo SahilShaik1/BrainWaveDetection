@@ -1,52 +1,130 @@
-import pandas as pd
-import matplotlib.pyplot as plt
-from scipy.signal import butter, lfilter, lfilter_zi
-def butter_bandpass(lowcut, highcut, fs, order=5):
-    nyq = 0.5 * fs
-    low = lowcut / nyq
-    high = highcut / nyq
-    b, a = butter(order, [low, high], btype='band')
-    return b, a
+from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds
+from brainflow.data_filter import DataFilter, FilterTypes, WindowOperations, DetrendOperations
+import argparse
+import logging
+import pyqtgraph as pg
+from pyqtgraph.Qt import QtGui, QtCore
 
-def butter_bandpass_filter(data, lowcut, highcut, fs, order=5):
-    b, a = butter_bandpass(lowcut, highcut, fs, order=order)
-    zi = lfilter_zi(b, a) * data[0]
-    y, _ = lfilter(b, a, data, zi=zi)
-    return y
+class Structure:
+    def __init__(self, board_shim):
+        pg.setConfigOption('background', 'w')
+        pg.setConfigOption('foreground', 'k')
 
-sf = 250
+        self.board_id = board_shim.get_board_id()
+        self.board_shim = board_shim
+        self.exg_channels = BoardShim.get_exg_channels(self.board_id)
+        self.sampling_rate = BoardShim.get_sampling_rate(self.board_id)
+        self.update_speed_ms = 50
+        self.window_size = 4
+        self.num_points = self.window_size * self.sampling_rate
 
-df = pd.read_csv('data.csv')
-
-delta = butter_bandpass_filter(data=df.Fp2, lowcut=0.1, highcut=4, fs=sf, order = 3)
-
-theta = butter_bandpass_filter(data=df.Fp2, lowcut=4, highcut=8, fs=sf, order = 3)
-
-alpha = butter_bandpass_filter(data=df.Fp2, lowcut=8, highcut=13, fs=sf, order = 3)
-
-beta = butter_bandpass_filter(data=df.Fp2, lowcut=13, highcut=32, fs=sf, order = 3)
-
-gamma = butter_bandpass_filter(data=df.Fp2, lowcut=32, highcut=50, fs=sf, order = 3)
+        self.app = QtGui.QApplication([])
+        self.win = pg.GraphicsWindow(title='BrainFlow Plot', size=(800, 600))
 
 
-fig = plt.figure(1)
+        self._init_psd()
+        self._init_band_plot()
 
-plt.subplot(6, 1, 1)
-plt.plot(df.Fp2, linewidth=2)
+        timer = QtCore.QTimer()
+        timer.timeout.connect(self.update)
+        timer.start(self.update_speed_ms)
+        QtGui.QApplication.instance().exec_()
+    def _init_band_plot(self):
+        self.band_plot = self.win.addPlot(row=len(self.exg_channels) // 2, col=1, rowspan=len(self.exg_channels) // 2)
+        self.band_plot.showAxis('left', False)
+        self.band_plot.setMenuEnabled('left', False)
+        self.band_plot.showAxis('bottom', False)
+        self.band_plot.setMenuEnabled('bottom', False)
+        self.band_plot.setTitle('BandPower Plot')
+        y = [0, 0, 0, 0, 0]
+        x = [1, 2, 3, 4, 5]
+        self.band_bar = pg.BarGraphItem(x=x, height=y, width=0.8, pen=self.pens[0], brush=self.brushes[0])
+        self.band_plot.addItem(self.band_bar)
+    def _init_pens(self):
+        self.pens = list()
+        self.brushes = list()
+        colors = ['#A54E4E', '#A473B6', '#5B45A4', '#2079D2', '#32B798', '#2FA537', '#9DA52F', '#A57E2F', '#A53B2F']
+        for i in range(len(colors)):
+            pen = pg.mkPen({'color': colors[i], 'width': 2})
+            self.pens.append(pen)
+            brush = pg.mkBrush(colors[i])
+            self.brushes.append(brush)
+    def update(self):
+        data = self.board_shim.get_current_board_data(self.num_points)
+        avg_bands = [0, 0, 0, 0, 0]
+        for count, channel in enumerate(self.exg_channels):
+            # plot timeseries
+            DataFilter.detrend(data[channel], DetrendOperations.CONSTANT.value)
+            DataFilter.perform_bandpass(data[channel], self.sampling_rate, 3.0, 45.0, 2,
+                                        FilterTypes.BUTTERWORTH_ZERO_PHASE, 0)
+            DataFilter.perform_bandstop(data[channel], self.sampling_rate, 48.0, 52.0, 2,
+                                        FilterTypes.BUTTERWORTH_ZERO_PHASE, 0)
+            DataFilter.perform_bandstop(data[channel], self.sampling_rate, 58.0, 62.0, 2,
+                                        FilterTypes.BUTTERWORTH_ZERO_PHASE, 0)
+            self.curves[count].setData(data[channel].tolist())
+            if data.shape[1] > self.psd_size:
+                # plot psd
+                psd_data = DataFilter.get_psd_welch(data[channel], self.psd_size, self.psd_size // 2,
+                                                    self.sampling_rate,
+                                                    WindowOperations.BLACKMAN_HARRIS.value)
+                lim = min(70, len(psd_data[0]))
+                self.psd_curves[count].setData(psd_data[1][0:lim].tolist(), psd_data[0][0:lim].tolist())
+                # plot bands
+                avg_bands[0] = avg_bands[0] + DataFilter.get_band_power(psd_data, 2.0, 4.0)
+                avg_bands[1] = avg_bands[1] + DataFilter.get_band_power(psd_data, 4.0, 8.0)
+                avg_bands[2] = avg_bands[2] + DataFilter.get_band_power(psd_data, 8.0, 13.0)
+                avg_bands[3] = avg_bands[3] + DataFilter.get_band_power(psd_data, 13.0, 30.0)
+                avg_bands[4] = avg_bands[4] + DataFilter.get_band_power(psd_data, 30.0, 50.0)
 
-plt.subplot(6, 1, 2)
-plt.plot(delta, linewidth=2)
+        avg_bands = [int(x * 100 / len(self.exg_channels)) for x in avg_bands]
+        self.band_bar.setOpts(height=avg_bands)
 
-plt.subplot(6, 1, 3)
-plt.plot(theta, linewidth=2)
+        self.app.processEvents()
+BoardShim.enable_dev_board_logger()
+logging.basicConfig(level=logging.DEBUG)
 
-plt.subplot(6, 1, 4)
-plt.plot(alpha, linewidth=2)
+parser = argparse.ArgumentParser()
+# use docs to check which parameters are required for specific board, e.g. for Cyton - set serial port
+parser.add_argument('--timeout', type=int, help='timeout for device discovery or connection', required=False,
+                    default=0)
+parser.add_argument('--ip-port', type=int, help='ip port', required=False, default=0)
+parser.add_argument('--ip-protocol', type=int, help='ip protocol, check IpProtocolType enum', required=False,
+                    default=0)
+parser.add_argument('--ip-address', type=str, help='ip address', required=False, default='')
+parser.add_argument('--serial-port', type=str, help='serial port', required=False, default='')
+parser.add_argument('--mac-address', type=str, help='mac address', required=False, default='')
+parser.add_argument('--other-info', type=str, help='other info', required=False, default='')
+parser.add_argument('--streamer-params', type=str, help='streamer params', required=False, default='')
+parser.add_argument('--serial-number', type=str, help='serial number', required=False, default='')
+parser.add_argument('--board-id', type=int, help='board id, check docs to get a list of supported boards',
+                    required=False, default=BoardIds.SYNTHETIC_BOARD)
+parser.add_argument('--file', type=str, help='file', required=False, default='')
+parser.add_argument('--master-board', type=int, help='master board id for streaming and playback boards',
+                    required=False, default=BoardIds.NO_BOARD)
 
-plt.subplot(6, 1, 5)
-plt.plot(beta, linewidth=2)
+args = parser.parse_args()
 
-plt.subplot(6, 1, 6)
-plt.plot(gamma, linewidth=2)
+params = BrainFlowInputParams()
+params.ip_port = args.ip_port
+params.serial_port = args.serial_port
+params.mac_address = args.mac_address
+params.other_info = args.other_info
+params.serial_number = args.serial_number
+params.ip_address = args.ip_address
+params.ip_protocol = args.ip_protocol
+params.timeout = args.timeout
+params.file = args.file
+params.master_board = args.master_board
 
-plt.show()
+
+board_shim = BoardShim(args.board_id, params)
+
+try:
+    board_shim.prepare_session()
+    board_shim.start_stream(450000, args.streamer_params)
+except BaseException:
+    logging.warning('Exception', exc_info=True)
+finally:
+    if board_shim.is_prepared():
+        logging.info('Releasing session')
+        board_shim.release_session()
