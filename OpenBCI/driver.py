@@ -1,130 +1,67 @@
-from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds
-from brainflow.data_filter import DataFilter, FilterTypes, WindowOperations, DetrendOperations
 import argparse
-import logging
-import pyqtgraph as pg
-from pyqtgraph.Qt import QtGui, QtCore
+import time
+import numpy as np
 
-class Structure:
-    def __init__(self, board_shim):
-        pg.setConfigOption('background', 'w')
-        pg.setConfigOption('foreground', 'k')
+import brainflow
 
-        self.board_id = board_shim.get_board_id()
-        self.board_shim = board_shim
-        self.exg_channels = BoardShim.get_exg_channels(self.board_id)
-        self.sampling_rate = BoardShim.get_sampling_rate(self.board_id)
-        self.update_speed_ms = 50
-        self.window_size = 4
-        self.num_points = self.window_size * self.sampling_rate
+from brainflow.board_shim import BoardShim, BrainFlowInputParams, LogLevels, BoardIds
+from brainflow.data_filter import DataFilter, FilterTypes, AggOperations, WindowOperations, DetrendOperations
+import matplotlib.pyplot as plt
 
-        self.app = QtGui.QApplication([])
-        self.win = pg.GraphicsWindow(title='BrainFlow Plot', size=(800, 600))
+import matplotlib.animation as animation
 
 
-        self._init_psd()
-        self._init_band_plot()
-
-        timer = QtCore.QTimer()
-        timer.timeout.connect(self.update)
-        timer.start(self.update_speed_ms)
-        QtGui.QApplication.instance().exec_()
-    def _init_band_plot(self):
-        self.band_plot = self.win.addPlot(row=len(self.exg_channels) // 2, col=1, rowspan=len(self.exg_channels) // 2)
-        self.band_plot.showAxis('left', False)
-        self.band_plot.setMenuEnabled('left', False)
-        self.band_plot.showAxis('bottom', False)
-        self.band_plot.setMenuEnabled('bottom', False)
-        self.band_plot.setTitle('BandPower Plot')
-        y = [0, 0, 0, 0, 0]
-        x = [1, 2, 3, 4, 5]
-        self.band_bar = pg.BarGraphItem(x=x, height=y, width=0.8, pen=self.pens[0], brush=self.brushes[0])
-        self.band_plot.addItem(self.band_bar)
-    def _init_pens(self):
-        self.pens = list()
-        self.brushes = list()
-        colors = ['#A54E4E', '#A473B6', '#5B45A4', '#2079D2', '#32B798', '#2FA537', '#9DA52F', '#A57E2F', '#A53B2F']
-        for i in range(len(colors)):
-            pen = pg.mkPen({'color': colors[i], 'width': 2})
-            self.pens.append(pen)
-            brush = pg.mkBrush(colors[i])
-            self.brushes.append(brush)
-    def update(self):
-        data = self.board_shim.get_current_board_data(self.num_points)
-        avg_bands = [0, 0, 0, 0, 0]
-        for count, channel in enumerate(self.exg_channels):
-            # plot timeseries
-            DataFilter.detrend(data[channel], DetrendOperations.CONSTANT.value)
-            DataFilter.perform_bandpass(data[channel], self.sampling_rate, 3.0, 45.0, 2,
-                                        FilterTypes.BUTTERWORTH_ZERO_PHASE, 0)
-            DataFilter.perform_bandstop(data[channel], self.sampling_rate, 48.0, 52.0, 2,
-                                        FilterTypes.BUTTERWORTH_ZERO_PHASE, 0)
-            DataFilter.perform_bandstop(data[channel], self.sampling_rate, 58.0, 62.0, 2,
-                                        FilterTypes.BUTTERWORTH_ZERO_PHASE, 0)
-            self.curves[count].setData(data[channel].tolist())
-            if data.shape[1] > self.psd_size:
-                # plot psd
-                psd_data = DataFilter.get_psd_welch(data[channel], self.psd_size, self.psd_size // 2,
-                                                    self.sampling_rate,
-                                                    WindowOperations.BLACKMAN_HARRIS.value)
-                lim = min(70, len(psd_data[0]))
-                self.psd_curves[count].setData(psd_data[1][0:lim].tolist(), psd_data[0][0:lim].tolist())
-                # plot bands
-                avg_bands[0] = avg_bands[0] + DataFilter.get_band_power(psd_data, 2.0, 4.0)
-                avg_bands[1] = avg_bands[1] + DataFilter.get_band_power(psd_data, 4.0, 8.0)
-                avg_bands[2] = avg_bands[2] + DataFilter.get_band_power(psd_data, 8.0, 13.0)
-                avg_bands[3] = avg_bands[3] + DataFilter.get_band_power(psd_data, 13.0, 30.0)
-                avg_bands[4] = avg_bands[4] + DataFilter.get_band_power(psd_data, 30.0, 50.0)
-
-        avg_bands = [int(x * 100 / len(self.exg_channels)) for x in avg_bands]
-        self.band_bar.setOpts(height=avg_bands)
-
-        self.app.processEvents()
-BoardShim.enable_dev_board_logger()
-logging.basicConfig(level=logging.DEBUG)
-
-parser = argparse.ArgumentParser()
-# use docs to check which parameters are required for specific board, e.g. for Cyton - set serial port
-parser.add_argument('--timeout', type=int, help='timeout for device discovery or connection', required=False,
-                    default=0)
-parser.add_argument('--ip-port', type=int, help='ip port', required=False, default=0)
-parser.add_argument('--ip-protocol', type=int, help='ip protocol, check IpProtocolType enum', required=False,
-                    default=0)
-parser.add_argument('--ip-address', type=str, help='ip address', required=False, default='')
-parser.add_argument('--serial-port', type=str, help='serial port', required=False, default='')
-parser.add_argument('--mac-address', type=str, help='mac address', required=False, default='')
-parser.add_argument('--other-info', type=str, help='other info', required=False, default='')
-parser.add_argument('--streamer-params', type=str, help='streamer params', required=False, default='')
-parser.add_argument('--serial-number', type=str, help='serial number', required=False, default='')
-parser.add_argument('--board-id', type=int, help='board id, check docs to get a list of supported boards',
-                    required=False, default=BoardIds.SYNTHETIC_BOARD)
-parser.add_argument('--file', type=str, help='file', required=False, default='')
-parser.add_argument('--master-board', type=int, help='master board id for streaming and playback boards',
-                    required=False, default=BoardIds.NO_BOARD)
-
-args = parser.parse_args()
-
+fig = plt.figure()
+ax = fig.add_subplot(1, 1, 1)
 params = BrainFlowInputParams()
-params.ip_port = args.ip_port
-params.serial_port = args.serial_port
-params.mac_address = args.mac_address
-params.other_info = args.other_info
-params.serial_number = args.serial_number
-params.ip_address = args.ip_address
-params.ip_protocol = args.ip_protocol
-params.timeout = args.timeout
-params.file = args.file
-params.master_board = args.master_board
+params.serial_port = '/dev/ttyUSB0'
+board = BoardShim(0, params)
+sampling_rate = BoardShim.get_sampling_rate(BoardIds.SYNTHETIC_BOARD.value)
+nfft = DataFilter.get_nearest_power_of_two(sampling_rate)
+def update(frame):
+    avg_bands = [0, 0, 0, 0, 0]
+    bands = [0, 0, 0, 0, 0]
+    time.sleep(10)
+    plt.clf()
+    data = board.get_board_data()
+    eeg_channels = BoardShim.get_eeg_channels(BoardIds.SYNTHETIC_BOARD.value)
+    active = [channel for channel in eeg_channels if channel > 0]
+    psd_s = []
+
+    for channel in active:
+        DataFilter.detrend(data[channel], DetrendOperations.LINEAR.value)
+        psd_data = DataFilter.get_psd_welch(data[channel], nfft, nfft // 2, sampling_rate, WindowOperations.BLACKMAN_HARRIS.value)
+        plt.plot(psd_data[1][:60], psd_data[0][:60])
+        psd_s.append(psd_data)
+        bands[0] += DataFilter.get_band_power(psd_data, 2.0, 4.0)
+        bands[1] += DataFilter.get_band_power(psd_data, 4.0, 8.0)
+        bands[2] += DataFilter.get_band_power(psd_data, 8.0, 13.0)
+        bands[3] += DataFilter.get_band_power(psd_data, 13.0, 30.0)
+        bands[4] += DataFilter.get_band_power(psd_data, 30.0, 50.0)
+    avg_bands = [band / len(active) for band in bands]
+    print(f"DELTA: {avg_bands[0]}")
+    print(f"THETA: {avg_bands[1]}")
+    print(f"ALPHA: {avg_bands[2]}")
+    print(f"BETA: {avg_bands[3]}")
+    print(f"GAMMA: {avg_bands[4]}")
+
+def main():
+
+    BoardShim.enable_dev_board_logger()
 
 
-board_shim = BoardShim(args.board_id, params)
+    board.prepare_session()
 
-try:
-    board_shim.prepare_session()
-    board_shim.start_stream(450000, args.streamer_params)
-except BaseException:
-    logging.warning('Exception', exc_info=True)
-finally:
-    if board_shim.is_prepared():
-        logging.info('Releasing session')
-        board_shim.release_session()
+    # board.start_stream () # use this for default options
+    board.start_stream()
+
+    time.sleep(1)
+    # data = board.get_current_board_data (256) # get latest 256 packages or less, doesnt remove them from internal buffer
+      # get all data and remove it from internal buffer
+    ani = animation.FuncAnimation(fig, update, frames=50, interval=1000)
+    plt.show()
+
+
+
+if __name__ == "__main__":
+    main()
