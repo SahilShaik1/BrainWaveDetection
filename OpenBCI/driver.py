@@ -14,8 +14,8 @@ import matplotlib.animation as animation
 fig = plt.figure()
 ax = fig.add_subplot(1, 1, 1)
 params = BrainFlowInputParams()
-
-board = BoardShim(BoardIds.SYNTHETIC_BOARD.value, params)
+params.serial_port = '/dev/ttyUSB0'
+board = BoardShim(0, params)
 sampling_rate = BoardShim.get_sampling_rate(BoardIds.SYNTHETIC_BOARD.value)
 nfft = DataFilter.get_nearest_power_of_two(sampling_rate)
 def update(frame):
@@ -36,7 +36,6 @@ def update(frame):
                                     FilterTypes.BUTTERWORTH_ZERO_PHASE, 0)
         DataFilter.perform_bandstop(data[channel], sampling_rate, 58.0, 62.0, 2,
                                     FilterTypes.BUTTERWORTH_ZERO_PHASE, 0)
-        DataFilter.detrend(data[channel], DetrendOperations.LINEAR.value)
         psd_data = DataFilter.get_psd_welch(data[channel], nfft, nfft // 2, sampling_rate, WindowOperations.BLACKMAN_HARRIS.value)
         plt.plot(psd_data[1][:60], psd_data[0][:60])
         psd_s.append(psd_data)
