@@ -19,7 +19,6 @@ board = BoardShim(0, params)
 sampling_rate = BoardShim.get_sampling_rate(BoardIds.SYNTHETIC_BOARD.value)
 nfft = DataFilter.get_nearest_power_of_two(sampling_rate)
 def update(frame):
-    avg_bands = [0, 0, 0, 0, 0]
     bands = [0, 0, 0, 0, 0]
     time.sleep(10)
     plt.clf()
