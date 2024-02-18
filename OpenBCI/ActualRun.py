@@ -16,7 +16,7 @@ ax = fig.add_subplot(1, 1, 1)
 params = BrainFlowInputParams()
 params.serial_port = '/dev/ttyUSB0'
 board = BoardShim(0, params)
-sampling_rate = BoardShim.get_sampling_rate(BoardIds.SYNTHETIC_BOARD.value)
+sampling_rate = BoardShim.get_sampling_rate(0)
 nfft = DataFilter.get_nearest_power_of_two(sampling_rate)
 def update(frame):
     bands = [0, 0, 0, 0, 0]
